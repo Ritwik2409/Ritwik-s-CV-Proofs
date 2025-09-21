@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Tracker by RJ (Offline)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Library for Excel generation (ExcelJS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <!-- Library for Signature Pad -->
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+    <!-- IndexedDB Promise-based library -->
+    <script src="https://cdn.jsdelivr.net/npm/idb@7/build/umd.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .status-btn {
+            transition: all 0.2s ease-in-out;
+        }
+        .status-btn.present { background-color: #10b981; color: white; }
+        .status-btn.absent { background-color: #ef4444; color: white; }
+        .status-btn.late { background-color: #f59e0b; color: white; }
+        .status-btn.pending { background-color: #f59e0b; color: white; }
+        .status-btn.unmarked { background-color: #4b5563; color: #d1d5db; }
+        .status-btn:hover:not(:disabled) { opacity: 0.8; }
+        .status-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+        .modal-overlay {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
+        }
+        .modal-overlay.is-active {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+        .signature-canvas {
+            border: 2px dashed #4b5563;
+            border-radius: 0.5rem;
+            cursor: crosshair;
+            touch-action: none;
+        }
+        #floating-signature-pad {
+            transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
+            transform: scale(0.95) translate(-50%, -50%);
+        }
+        #floating-signature-pad.is-active {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transform: scale(1) translate(-50%, -50%);
+        }
+        #signature-pad-header {
+            cursor: move;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-300">
+
+    <div id="app" class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        
+        <header class="mb-6 flex justify-between items-start">
+            <div>
+                <h1 class="text-3xl font-bold text-white">Attendance Tracker (Offline)</h1>
+                <p class="text-gray-400 mt-1">Your data is saved securely on this device.</p>
+            </div>
+            <div class="flex space-x-2">
+                 <button id="backup-btn" title="Backup Data" class="bg-gray-800 p-3 rounded-lg border border-gray-700 hover:bg-gray-700 transition duration-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                </button>
+                <button id="restore-btn" title="Restore Data" class="bg-gray-800 p-3 rounded-lg border border-gray-700 hover:bg-gray-700 transition duration-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                </button>
+                 <input type="file" id="restore-input" class="hidden" accept=".json">
+            </div>
+        </header>
+
+        <main id="main-content">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                    <label for="attendance-date" class="block text-sm font-medium text-gray-400 mb-1">Select Date:</label>
+                    <input type="date" id="attendance-date" class="w-full p-2 bg-gray-700 border border-gray-600 text-white rounded-md focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 col-span-1 md:col-span-2">
+                    <h3 class="font-semibold text-white mb-2">Today's Summary</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                        <div>
+                            <p class="text-2xl font-bold text-green-400" id="present-count">0</p>
+                            <p class="text-sm text-gray-400">Present</p>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-red-400" id="absent-count">0</p>
+                            <p class="text-sm text-gray-400">Absent</p>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-amber-400" id="late-count">0</p>
+                            <p class="text-sm text-gray-400">Late</p>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-400" id="unmarked-count">0</p>
+                            <p class="text-sm text-gray-400">Unmarked</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-4 mb-6">
+                 <button id="lock-btn" class="w-full sm:w-auto flex-1 bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg shadow-lg hover:bg-indigo-700 transition duration-300">
+                    Lock
+                </button>
+                 <button id="export-btn" title="Export to Excel" class="w-full sm:w-auto flex-1 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-lg hover:bg-green-700 transition duration-300">
+                    Export to Excel
+                </button>
+            </div>
+            
+            <div id="message-box" class="hidden p-4 mb-4 text-sm text-center rounded-lg" role="alert">
+                <span id="message-text"></span>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-700">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Roll No.</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
+                            <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                            <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Signature</th>
+                        </tr>
+                    </thead>
+                    <tbody id="student-list" class="bg-gray-800 divide-y divide-gray-700">
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Modals -->
+    <div id="pin-modal-overlay" class="modal-overlay fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-6 rounded-lg shadow-xl w-full max-w-sm border border-gray-700">
+            <h3 id="pin-modal-title" class="text-lg font-semibold text-white mb-4">Enter Secret Code</h3>
+            <input type="password" id="secret-code-input" class="w-full p-2 bg-gray-700 border border-gray-600 text-white rounded-md mb-4" placeholder="****">
+            <div class="flex justify-end space-x-3">
+                <button id="cancel-pin-btn" class="px-4 py-2 bg-gray-600 text-gray-200 rounded-md hover:bg-gray-500">Cancel</button>
+                <button id="submit-pin-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Submit</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="confirm-modal-overlay" class="modal-overlay fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-6 rounded-lg shadow-xl w-full max-w-md border border-gray-700">
+            <h3 id="confirm-modal-title" class="text-lg font-semibold text-white mb-2">Confirm Action</h3>
+            <p id="confirm-modal-text" class="text-gray-400 mb-4">Are you sure?</p>
+            <div class="flex justify-end space-x-3">
+                <button id="cancel-confirm-btn" class="px-4 py-2 bg-gray-600 text-gray-200 rounded-md hover:bg-gray-500">Cancel</button>
+                <button id="submit-confirm-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="floating-signature-pad" class="fixed top-1/2 left-1/2 bg-gray-800 p-4 rounded-lg shadow-2xl w-full max-w-3xl z-[100] opacity-0 invisible pointer-events-none border border-gray-700">
+        <div id="signature-pad-header" class="bg-gray-700 p-2 rounded-t-lg mb-4 flex justify-between items-center cursor-move">
+            <h3 class="text-lg font-semibold text-white">Provide Signature</h3>
+            <button id="close-signature-btn" class="text-gray-400 hover:text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <div class="w-full aspect-video bg-gray-200 rounded-lg mb-4">
+            <canvas id="signature-canvas" class="signature-canvas w-full h-full"></canvas>
+        </div>
+        <div class="flex justify-between items-center">
+            <button id="clear-signature-btn" class="px-4 py-2 bg-gray-600 text-gray-200 rounded-md hover:bg-gray-500">Clear</button>
+            <button id="save-signature-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Save Signature</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // --- Student Data ---
+        const studentsWithGroups = [
+            { roll: '-----T4 Group-----', name: '-----T4 Group========================================' },
+            { roll: '250102201', name: 'Abhinav Krishna L' },
+            { roll: '250102202', name: 'Akul Soni' },
+            { roll: '250102203', name: 'Ankit Kumar' },
+            { roll: '250102204', name: 'Ankita Kumari' },
+            { roll: '250102205', name: 'Anuvi Jain' },
+            { roll: '250102206', name: 'Asolakr Ganesh Sambhaji' },
+            { roll: '250102207', name: 'Ayush' },
+            { roll: '250102208', name: 'Brahmanapally Hanish' },
+            { roll: '250102209', name: 'Chinmay J K' },
+            { roll: '250102210', name: 'Daiwik Krishna T' },
+            { roll: '250102211', name: 'Doijad Sanskar Santosh' },
+            { roll: '250102212', name: 'Dushant Amol Kala' },
+            { roll: '250102213', name: 'Emaad Arsheed Hakeem' },
+            { roll: '250102214', name: 'Gollapalli Jyoshika' },
+            { roll: '250102215', name: 'Gupta Sachin Rajesh' },
+            { roll: '250102216', name: 'Hardik Jain' },
+            { roll: '250102217', name: 'Himanta Doley' },
+            { roll: '250102218', name: 'Ishant Shankar Salvi' },
+            { roll: '250102219', name: 'Jai Dixit' },
+            { roll: '250102220', name: 'Jayanth Kumar Ugripalli' },
+            { roll: '250102221', name: 'Joyshmit Das' },
+            { roll: '250102222', name: 'Jyotiraditya Ajit Jadhav' },
+            { roll: '250102223', name: 'Kadam Nakul Pravin' },
+            { roll: '250102224', name: 'Kaki Ananya' },
+            { roll: '250102225', name: 'Karakavalasa Sumith' },
+            { roll: '250102226', name: 'Katravath Rahul' },
+            { roll: '250102227', name: 'Kaustubhasobhit Boddeti' },
+            { roll: '250102228', name: 'Kayamkhani Huzaifa Yusuf' },
+            { roll: '250102229', name: 'Koyel Halder' },
+            { roll: '250102230', name: 'Lalit Kumar' },
+            { roll: '250102231', name: 'Lavu Darshan' },
+            { roll: '250102232', name: 'Mayank Saini' },
+            { roll: '250102233', name: 'Medha Rama Murthy' },
+            { roll: '250102234', name: 'Mohit Mohan Randhari' },
+            { roll: '250102235', name: 'Naitik Bayal' },
+            { roll: '250102236', name: 'Naman Mittal' },
+            { roll: '250102237', name: 'Nandlal Singh' },
+            { roll: '250102238', name: 'Nayakam Santhosh Kumar' },
+            { roll: '250102239', name: 'Nirbhay Krishnan' },
+            { roll: '250102240', name: 'Praanjal' },
+            { roll: '250102241', name: 'Prathipati Veera Venkata Ritesh' },
+            { roll: '250102242', name: 'Priyanshu Debnath' },
+            { roll: '250102243', name: 'Renz Roy' },
+            { roll: '240102223', name: 'Eslavath Shiva Kumar' },
+            { roll: '-----T5 group-----', name: '-----T5 group========================================' },
+            { roll: '250102244', name: 'Sayan Majee' },
+            { roll: '250102245', name: 'Seethannagari Tharun' },
+            { roll: '250102246', name: 'Shaurya Pratap Singh' },
+            { roll: '250102247', name: 'Shaurya Singh' },
+            { roll: '250102248', name: 'Shivendra' },
+            { roll: '250102249', name: 'Shruthasen Gowda B U' },
+            { roll: '250102250', name: 'Spoorthi' },
+            { roll: '250102251', name: 'Stuti Goswami' },
+            { roll: '250102252', name: 'Sumedha Bhattacharya' },
+            { roll: '250102253', name: 'Tanvi Agarwal' },
+            { roll: '250102254', name: 'Tarun Baro' },
+            { roll: '250102255', name: 'Tathagata Dey' },
+            { roll: '250102256', name: 'Thea Negi' },
+            { roll: '250102257', name: 'Vanshika Kamal' },
+            { roll: '250102258', name: 'Varad Sushant Fadte' },
+            { roll: '250102259', name: 'Vedantha H Udupa' },
+            { roll: '250102260', name: 'Velpuri Bruhathsena' },
+            { roll: '250102261', name: 'Vivek' },
+            { roll: '250102262', name: 'Yamsani Preetham' },
+            { roll: '250102263', name: 'Yashraj Singh' },
+            { roll: '250102264', name: 'Yuvraj Singh' },
+            { roll: '250122001', name: 'Aanvi Agarwal' },
+            { roll: '250122002', name: 'Abhit Mukhija' },
+            { roll: '250122003', name: 'Aditi Kiran' }, // CORRECTED
+            { roll: '250122004', name: 'Allu Sri Durga Mahalaxmi' },
+            { roll: '250122005', name: 'Anant Kumar Saini' },
+            { roll: '250122006', name: 'Anirudh Shakya' },
+            { roll: '250122007', name: 'Ankit Verma' },
+            { roll: '250122008', name: 'Ankita Satpathy' }, // CORRECTED
+            { roll: '250122009', name: 'Archit Shukla' },
+            { roll: '250122010', name: 'Arzoo Sharma' },
+            { roll: '250122011', name: 'Avinash Dehariya' },
+            { roll: '250122012', name: 'Ayush Panwar' },
+            { roll: '250122013', name: 'Banoth Murali' },
+            { roll: '250122014', name: 'Bhavana' },
+            { roll: '250122015', name: 'Dhanush Narayan' },
+            { roll: '250122016', name: 'Dhruv Chawla' },
+            { roll: '250122017', name: 'Gosavi Soham Nitin' },
+            { roll: '250122018', name: 'Gourav' },
+            { roll: '250122019', name: 'Guntu Dinesh Naga Ramana' },
+            { roll: '250122020', name: 'Gutha Abhinav Reddy' },
+            { roll: '250122021', name: 'Hamebansan Marpna' },
+            { roll: '250122022', name: 'Harsh Meena' },
+            { roll: '-----T6 group-----', name: '-----T6 group========================================' },
+            { roll: '250122023', name: 'Heramb Pandey' },
+            { roll: '250122024', name: 'Ishant Lamba' },
+            { roll: '250122025', name: 'Jitesh Mundhra' },
+            { roll: '250122026', name: 'Krishna Aryan Pathak' },
+            { roll: '250122027', name: 'Krishnangi Das' },
+            { roll: '250122028', name: 'Kumar Aryan' },
+            { roll: '250122029', name: 'Kunal Nitin Silekar' },
+            { roll: '250122030', name: 'Manvendra Singh Charan' },
+            { roll: '250122031', name: 'Mudavath Geethanjali' },
+            { roll: '250122032', name: 'Navdeep' },
+            { roll: '250122033', name: 'Nihira Singh' },
+            { roll: '250122034', name: 'Nimish Agrawal' },
+            { roll: '250122035', name: 'Nirban Ghosh' },
+            { roll: '250122036', name: 'Nishi Jain' },
+            { roll: '250122037', name: 'Parneet Kaur' },
+            { roll: '250122038', 'name': 'Piyush Kumar' },
+            { roll: '250122039', name: 'Pranav Goyal' },
+            { roll: '250122040', name: 'Pratik Raj' },
+            { roll: '250122041', name: 'Priyanshu Gupta' },
+            { roll: '250122042', name: 'Punjabi Yogesh Deepakbhai' },
+            { roll: '250122043', name: 'Pushkar Sharma' },
+            { roll: '250122044', name: 'Ram Singh Malviya' },
+            { roll: '250122045', name: 'Rohit Virayas' },
+            { roll: '250122046', name: 'Sacheth Gowda K' },
+            { roll: '250122047', name: 'Saurabh Kumar' },
+            { roll: '250122048', name: 'Shaurya Goyal' },
+            { roll: '250122049', name: 'Shaurya Jain' },
+            { roll: '250122050', name: 'Sheersh Agarwal' },
+            { roll: '250122051', name: 'Shiva Chungkrang' },
+            { roll: '250122052', name: 'Shivansh Srivastava' },
+            { roll: '250122053', name: 'Shubh Satyam' },
+            { roll: '250122054', name: 'Shyam Narayan Gupta' },
+            { roll: '250122055', name: 'Smruti Ranjan Ghosh' },
+            { roll: '250122056', name: 'Sundar Narayanan R V' },
+            { roll: '250122057', name: 'Swaraj Pani' },
+            { roll: '250122058', name: 'Tarun Sah' },
+            { roll: '250122059', name: 'Vaibhav' },
+            { roll: '250122060', name: 'Vansh Chauhan' },
+            { roll: '250122061', name: 'Vidhi Joshi' },
+            { roll: '250122062', name: 'Vidya Roli' },
+            { roll: '250122063', name: 'Watan Kumar' },
+            { roll: '250122064', name: 'Yesaboina Kalyan Krishna' },
+            { roll: '250122065', name: 'Yuvraj Bhatt' }
+        ];
+        
+        const actualStudents = studentsWithGroups.filter(s => !s.roll.startsWith('-----'));
+        const DATE_STORAGE_KEY = 'ME101_CURRENT_DATE';
+        const DB_NAME = 'AttendanceDB';
+        const STORE_NAME = 'AttendanceStore';
+
+        // --- Database Setup ---
+        let db;
+        async function initDB() {
+            db = await idb.openDB(DB_NAME, 1, {
+                upgrade(db) {
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME);
+                    }
+                },
+            });
+        }
+
+        async function loadDataFromDB() {
+            if (!db) await initDB();
+            const keys = await db.getAllKeys(STORE_NAME);
+            const values = await db.getAll(STORE_NAME);
+            const data = {};
+            for(let i = 0; i < keys.length; i++) {
+                data[keys[i]] = values[i];
+            }
+            return data;
+        }
+
+        async function saveDataToDB() {
+            if (!db) await initDB();
+            try {
+                if (allAttendanceData[currentDate]) {
+                    await db.put(STORE_NAME, allAttendanceData[currentDate], currentDate);
+                }
+            } catch (e) {
+                console.error("Error saving to IndexedDB:", e);
+                showMessage("Could not save data.", "error");
+            }
+        }
+        
+        async function restoreDataInDB(data) {
+            if (!db) await initDB();
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            await tx.objectStore(STORE_NAME).clear();
+            for (const key in data) {
+                await tx.objectStore(STORE_NAME).put(data[key], key);
+            }
+            await tx.done;
+        }
+
+
+        // --- App State ---
+        let allAttendanceData = {}; 
+        let currentDate;
+        let isLocked = false;
+        const SECRET_CODE = "2409";
+        let actionToConfirm = null; 
+        let actionToConfirmCallback = null;
+        let signaturePad;
+        let currentSigningRoll = null;
+        let currentClearingRoll = null;
+        let pendingDate = null; 
+
+        // --- DOM Elements ---
+        const studentListBody = document.getElementById('student-list');
+        const datePicker = document.getElementById('attendance-date');
+        const lockBtn = document.getElementById('lock-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const backupBtn = document.getElementById('backup-btn');
+        const restoreBtn = document.getElementById('restore-btn');
+        const restoreInput = document.getElementById('restore-input');
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+        const pinModalOverlay = document.getElementById('pin-modal-overlay');
+        const pinModalTitle = document.getElementById('pin-modal-title');
+        const secretCodeInput = document.getElementById('secret-code-input');
+        const cancelPinBtn = document.getElementById('cancel-pin-btn');
+        const submitPinBtn = document.getElementById('submit-pin-btn');
+        const confirmModalOverlay = document.getElementById('confirm-modal-overlay');
+        const confirmModalText = document.getElementById('confirm-modal-text');
+        const cancelConfirmBtn = document.getElementById('cancel-confirm-btn');
+        const submitConfirmBtn = document.getElementById('submit-confirm-btn');
+        
+        const floatingSignaturePad = document.getElementById('floating-signature-pad');
+        const signatureCanvas = document.getElementById('signature-canvas');
+        const clearSignatureBtn = document.getElementById('clear-signature-btn');
+        const closeSignatureBtn = document.getElementById('close-signature-btn');
+        const saveSignatureBtn = document.getElementById('save-signature-btn');
+        const signaturePadHeader = document.getElementById('signature-pad-header');
+        
+        // --- Functions ---
+        const showMessage = (message, type = 'success', duration = 3000) => {
+            messageText.textContent = message;
+            messageBox.className = `p-4 mb-4 text-sm text-center rounded-lg ${
+                type === 'success' ? 'bg-green-900 text-green-200' :
+                type === 'error' ? 'bg-red-900 text-red-200' :
+                'bg-blue-900 text-blue-200'
+            }`;
+            messageBox.classList.remove('hidden');
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, duration);
+        };
+        
+        const updateLockUI = (locked) => {
+            isLocked = locked;
+            document.querySelectorAll('.status-btn, .sign-btn, .clear-sig-btn').forEach(btn => btn.disabled = locked);
+
+            if (locked) {
+                lockBtn.textContent = 'Unlock';
+                lockBtn.classList.replace('bg-indigo-600', 'bg-red-600');
+                lockBtn.classList.replace('hover:bg-indigo-700', 'hover:bg-red-700');
+            } else {
+                lockBtn.textContent = 'Lock';
+                lockBtn.classList.replace('bg-red-600', 'bg-indigo-600');
+                lockBtn.classList.replace('hover:bg-red-700', 'hover:bg-indigo-700');
+            }
+        };
+
+        const renderStudentList = () => {
+            const todaysData = allAttendanceData[currentDate] || {};
+            studentListBody.innerHTML = '';
+            let currentGroup = ''; 
+            studentsWithGroups.forEach(item => {
+                const row = document.createElement('tr');
+                if (item.roll.startsWith('-----')) {
+                    currentGroup = item.roll; 
+                    row.classList.add('bg-gray-900');
+                    row.innerHTML = `<td colspan="4" class="px-6 py-3 text-lg font-bold text-gray-200">${item.roll.replace(/[-=]/g, ' ')}</td>`;
+                    studentListBody.appendChild(row);
+                } else {
+                    row.id = `student-${item.roll}`;
+                    row.dataset.group = currentGroup; 
+                    studentListBody.appendChild(row); 
+                    updateStudentRow(item.roll); 
+                }
+            });
+            updateSummary();
+            updateLockUI(todaysData.locked || false);
+        };
+        
+        const updateStudentRow = (roll) => {
+            const row = document.getElementById(`student-${roll}`);
+            if (!row) return;
+
+            const group = row.dataset.group || '';
+            let rollAndNameColorClass = 'text-gray-100'; 
+
+            if (group.includes('T4')) {
+                rollAndNameColorClass = 'text-red-400';
+            } else if (group.includes('T5')) {
+                rollAndNameColorClass = 'text-green-400';
+            } else if (group.includes('T6')) {
+                rollAndNameColorClass = 'text-blue-400';
+            }
+
+            const todaysData = allAttendanceData[currentDate] || {};
+            const student = studentsWithGroups.find(s => s.roll === roll);
+            const status = todaysData[roll] || 'unmarked';
+            const signatureData = todaysData[`${roll}_sig`];
+            
+            const canSign = (status === 'present' || status === 'late');
+            const isSigned = !!signatureData;
+
+            let signCellHtml;
+            if (isSigned) {
+                signCellHtml = `
+                    <div class="flex items-center justify-center space-x-2">
+                        <span class="px-3 py-1 text-sm font-semibold text-green-200 bg-green-900/50 rounded-full">Signed ✓</span>
+                        <button data-roll="${roll}" class="clear-sig-btn text-red-400 hover:text-red-500 disabled:text-gray-600" ${isLocked ? 'disabled' : ''} title="Clear Signature">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor">
+                              <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                `;
+            } else if (canSign) {
+                signCellHtml = `<button data-roll="${roll}" class="sign-btn px-3 py-1 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700" ${isLocked ? 'disabled' : ''}>Sign</button>`;
+            } else {
+                signCellHtml = '';
+            }
+
+            let statusCellHtml;
+            if (isSigned) {
+                const statusText = status.charAt(0).toUpperCase() + status.slice(1);
+                const statusColorClass = status === 'present' ? 'text-green-200 bg-green-900/50' : 'text-amber-200 bg-amber-900/50';
+                statusCellHtml = `<span class="px-3 py-1.5 text-sm font-semibold ${statusColorClass} rounded-full">${statusText}</span>`;
+            } else {
+                const presentClass = status === 'present' ? 'present' : 'unmarked';
+                const lateClass = status === 'late' ? 'late' : 'unmarked';
+                const absentClass = status === 'absent' ? 'absent' : 'unmarked';
+                const statusButtonsDisabled = isLocked ? 'disabled' : '';
+
+                statusCellHtml = `
+                    <div class="flex items-center justify-center space-x-2">
+                        <button data-roll="${roll}" data-status="present" class="status-btn px-3 py-1.5 rounded-md text-sm font-medium ${presentClass}" ${statusButtonsDisabled}>P</button>
+                        <button data-roll="${roll}" data-status="absent" class="status-btn px-3 py-1.5 rounded-md text-sm font-medium ${absentClass}" ${statusButtonsDisabled}>A</button>
+                        <button data-roll="${roll}" data-status="late" class="status-btn px-3 py-1.5 rounded-md text-sm font-medium ${lateClass}" ${statusButtonsDisabled}>L</button>
+                    </div>
+                `;
+            }
+
+            row.innerHTML = `
+                <td class="px-6 py-4 whitespace-nowrap"><div class="text-lg ${rollAndNameColorClass}">${roll}</div></td>
+                <td class="px-6 py-4 whitespace-nowrap"><div class="text-lg ${rollAndNameColorClass}">${student.name}</div></td>
+                <td class="px-6 py-4 whitespace-nowrap text-center">
+                    ${statusCellHtml}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-center">
+                   ${signCellHtml}
+                </td>
+            `;
+        };
+
+        const updateSummary = () => {
+            const todaysData = allAttendanceData[currentDate] || {};
+            let present = 0, absent = 0, late = 0;
+            actualStudents.forEach(student => {
+                const status = todaysData[student.roll];
+                if (status === 'present') present++;
+                else if (status === 'absent') absent++;
+                else if (status === 'late') late++;
+            });
+            document.getElementById('present-count').textContent = present;
+            document.getElementById('absent-count').textContent = absent;
+            document.getElementById('late-count').textContent = late;
+            document.getElementById('unmarked-count').textContent = actualStudents.length - (present + absent + late);
+        };
+        
+        const handleTableClick = (e) => {
+            if (isLocked) return;
+
+            const statusButton = e.target.closest('.status-btn');
+            const signButton = e.target.closest('.sign-btn');
+            const clearButton = e.target.closest('.clear-sig-btn');
+
+            if (statusButton && !statusButton.disabled) {
+                const { roll, status } = statusButton.dataset;
+                if (!allAttendanceData[currentDate]) {
+                    allAttendanceData[currentDate] = {};
+                }
+                const todaysData = allAttendanceData[currentDate];
+                
+                if (todaysData[roll] === status) {
+                    delete todaysData[roll];
+                } else {
+                    todaysData[roll] = status;
+                }
+                
+                updateStudentRow(roll);
+                updateSummary();
+                saveDataToDB();
+            } else if (signButton) {
+                const { roll } = signButton.dataset;
+                showSignatureModal(roll);
+            } else if (clearButton) {
+                const { roll } = clearButton.dataset;
+                currentClearingRoll = roll;
+                showPinModal('clearSignature');
+            }
+        };
+        
+        // --- Modal Logic ---
+        const showPinModal = (action) => {
+            actionToConfirm = action;
+            let title = 'Enter Secret Code';
+            if (action === 'toggleLock') {
+                title = isLocked ? 'Enter Code to Unlock' : 'Enter Code to Lock';
+            } else if (action === 'export') {
+                title = 'Enter Code to Export';
+            } else if (action === 'clearSignature') {
+                title = 'Enter Code to Clear Signature';
+            } else if (action === 'changeDate') {
+                title = 'Enter Code to Change Date';
+            }
+            pinModalTitle.textContent = title;
+            secretCodeInput.value = '';
+            pinModalOverlay.classList.add('is-active');
+        };
+
+        const hidePinModal = () => {
+            pinModalOverlay.classList.remove('is-active');
+            actionToConfirm = null;
+            pendingDate = null; 
+        };
+        
+        const showConfirmModal = (text, callback) => {
+            confirmModalText.textContent = text;
+            actionToConfirmCallback = callback;
+            confirmModalOverlay.classList.add('is-active');
+        };
+
+        const hideConfirmModal = () => {
+            confirmModalOverlay.classList.remove('is-active');
+            actionToConfirmCallback = null;
+        };
+
+        const handlePinSubmit = async () => {
+            if (secretCodeInput.value !== SECRET_CODE) {
+                showMessage('Incorrect secret code.', 'error');
+                return;
+            }
+
+            if (actionToConfirm === 'toggleLock') {
+                const todaysData = allAttendanceData[currentDate] || {};
+                const newLockState = !todaysData.locked;
+                todaysData.locked = newLockState;
+                if (!allAttendanceData[currentDate]) {
+                    allAttendanceData[currentDate] = todaysData;
+                }
+                updateLockUI(newLockState);
+                await saveDataToDB();
+                showMessage(newLockState ? 'Attendance Locked' : 'Attendance Unlocked', 'success');
+            } else if (actionToConfirm === 'export') {
+                generateExcel();
+            } else if (actionToConfirm === 'clearSignature') {
+                const todaysData = allAttendanceData[currentDate];
+                if (todaysData && currentClearingRoll && todaysData[`${currentClearingRoll}_sig`]) {
+                    delete todaysData[`${currentClearingRoll}_sig`];
+                    updateStudentRow(currentClearingRoll);
+                    await saveDataToDB();
+                    showMessage('Signature cleared!', 'success');
+                }
+                currentClearingRoll = null;
+            } else if (actionToConfirm === 'changeDate') {
+                if (pendingDate) {
+                    currentDate = pendingDate;
+                    datePicker.value = currentDate; 
+                    localStorage.setItem(DATE_STORAGE_KEY, currentDate); // Still use LS for non-critical date preference
+                    renderStudentList();
+                }
+                pendingDate = null;
+            }
+            
+            hidePinModal();
+        };
+
+        const resizeCanvas = () => {
+            const ratio =  Math.max(window.devicePixelRatio || 1, 1);
+            signatureCanvas.width = signatureCanvas.offsetWidth * ratio;
+            signatureCanvas.height = signatureCanvas.offsetHeight * ratio;
+            signatureCanvas.getContext("2d").scale(ratio, ratio);
+            if (signaturePad) {
+                signaturePad.clear();
+            }
+        };
+
+        const showSignatureModal = (roll) => {
+            currentSigningRoll = roll;
+            floatingSignaturePad.style.top = '50%';
+            floatingSignaturePad.style.left = '50%';
+            floatingSignaturePad.classList.add('is-active');
+            requestAnimationFrame(() => {
+                resizeCanvas();
+                signaturePad = new SignaturePad(signatureCanvas);
+            });
+        };
+
+        const hideSignatureModal = () => {
+            floatingSignaturePad.classList.remove('is-active');
+            if (signaturePad) {
+                signaturePad.off();
+                signaturePad = null;
+            }
+            currentSigningRoll = null;
+        };
+
+        const saveSignature = async () => {
+            if (!signaturePad || signaturePad.isEmpty()) {
+                showMessage("Please provide a signature first.", "error");
+                return;
+            }
+
+            const signatureDataURL = signaturePad.toDataURL('image/png'); 
+            const todaysData = allAttendanceData[currentDate];
+            if (todaysData && currentSigningRoll) {
+                todaysData[`${currentSigningRoll}_sig`] = signatureDataURL;
+                updateStudentRow(currentSigningRoll);
+                hideSignatureModal();
+                await saveDataToDB(); 
+            }
+        };
+
+        let isDragging = false;
+        let offsetX, offsetY;
+        signaturePadHeader.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            const rect = floatingSignaturePad.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+            signaturePadHeader.style.cursor = 'grabbing';
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            floatingSignaturePad.style.left = `${e.clientX - offsetX}px`;
+            floatingSignaturePad.style.top = `${e.clientY - offsetY}px`;
+        });
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            signaturePadHeader.style.cursor = 'move';
+        });
+
+        const handleExportClick = async () => {
+            const todaysData = allAttendanceData[currentDate] || {};
+            if (!todaysData.locked) {
+                showMessage('Please lock the attendance for this date before exporting.', 'info');
+                return;
+            }
+            showPinModal('export');
+        };
+        
+        const generateExcel = async () => {
+            showMessage('Generating Excel file... Please wait.', 'info', 5000);
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet(`Attendance ${currentDate}`);
+            const todaysData = allAttendanceData[currentDate] || {};
+
+            worksheet.columns = [
+                { header: 'Roll No.', key: 'roll', width: 15 },
+                { header: 'Name', key: 'name', width: 30 },
+                { header: 'Status', key: 'status', width: 12 },
+                { header: 'Signature', key: 'sig', width: 30 }
+            ];
+
+            for (const student of actualStudents) {
+                const status = (todaysData[student.roll] || 'Absent').replace(/^\w/, c => c.toUpperCase());
+                const signatureData = todaysData[`${student.roll}_sig`];
+                
+                const row = worksheet.addRow({
+                    roll: student.roll,
+                    name: student.name,
+                    status: status
+                });
+
+                if (signatureData) {
+                    const imageId = workbook.addImage({
+                        base64: signatureData,
+                        extension: 'png',
+                    });
+                    row.height = 60;
+                    worksheet.addImage(imageId, {
+                        tl: { col: 3.05, row: row.number - 1 + 0.05 },
+                        br: { col: 3.95, row: row.number - 1 + 0.95 }
+                    });
+                }
+                
+                row.getCell('status').alignment = { vertical: 'middle', horizontal: 'center' };
+                row.getCell('sig').alignment = { vertical: 'middle', horizontal: 'center' };
+            }
+
+            worksheet.getRow(1).font = { bold: true };
+            worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+            try {
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ME101_Attendance_${currentDate}_Signed.xlsx`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+                showMessage('Excel file generated successfully!', 'success');
+            } catch (error) {
+                console.error("Error generating Excel file:", error);
+                showMessage('Failed to generate Excel file.', 'error');
+            }
+        };
+
+        const handleBackup = async () => {
+            const data = await loadDataFromDB();
+            const dataStr = JSON.stringify(data, null, 2);
+            const blob = new Blob([dataStr], {type: "application/json"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'attendance_backup.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            showMessage('Backup file created.', 'success');
+        };
+
+        const handleRestore = () => {
+            restoreInput.click();
+        };
+
+        const handleFileSelect = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    showConfirmModal("This will overwrite all current attendance data. Are you sure you want to continue?", async () => {
+                        await restoreDataInDB(importedData);
+                        allAttendanceData = importedData;
+                        renderStudentList();
+                        showMessage('Data restored successfully!', 'success');
+                    });
+                } catch (error) {
+                    showMessage('Invalid backup file. Please select a valid .json file.', 'error');
+                }
+            };
+            reader.readAsText(file);
+            restoreInput.value = '';
+        };
+
+        const init = async () => {
+            await initDB();
+            const savedDate = localStorage.getItem(DATE_STORAGE_KEY);
+            currentDate = savedDate || new Date().toISOString().slice(0, 10);
+            datePicker.value = currentDate;
+            allAttendanceData = await loadDataFromDB();
+            renderStudentList();
+        };
+
+        // --- Event Listeners ---
+        datePicker.addEventListener('change', (e) => {
+            pendingDate = e.target.value;
+            showPinModal('changeDate');
+            e.target.value = currentDate;
+        });
+
+        studentListBody.addEventListener('click', handleTableClick);
+        lockBtn.addEventListener('click', () => showPinModal('toggleLock'));
+        exportBtn.addEventListener('click', handleExportClick);
+        backupBtn.addEventListener('click', handleBackup);
+        restoreBtn.addEventListener('click', handleRestore);
+        restoreInput.addEventListener('change', handleFileSelect);
+        
+        cancelPinBtn.addEventListener('click', hidePinModal);
+        submitPinBtn.addEventListener('click', handlePinSubmit);
+        secretCodeInput.addEventListener('keyup', (e) => e.key === 'Enter' && handlePinSubmit());
+
+        cancelConfirmBtn.addEventListener('click', hideConfirmModal);
+        submitConfirmBtn.addEventListener('click', () => {
+            if (actionToConfirmCallback) {
+                actionToConfirmCallback();
+            }
+            hideConfirmModal();
+        });
+
+        clearSignatureBtn.addEventListener('click', () => {
+            if (signaturePad) {
+                signaturePad.clear();
+            }
+        });
+        closeSignatureBtn.addEventListener('click', hideSignatureModal);
+        saveSignatureBtn.addEventListener('click', saveSignature);
+
+        // --- Start the App ---
+        init();
+
+    </script>
+</body>
+</html>
